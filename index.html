@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ETF PlayBook · Live Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #080c18;
+      --bg1: #0d1225;
+      --bg2: #111829;
+      --bg3: #1a2238;
+      --blue: #38bdf8;
+      --green: #34d399;
+      --red: #f87171;
+      --yellow: #fbbf24;
+      --purple: #a78bfa;
+      --orange: #fb923c;
+      --txt: #e2e8f0;
+      --txt2: #94a3b8;
+      --txt3: #475569;
+      --border: rgba(56,189,248,0.12);
+      --border2: rgba(56,189,248,0.06);
+      --glow: 0 0 24px rgba(56,189,248,0.18);
+      --glow-g: 0 0 24px rgba(52,211,153,0.18);
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--txt);
+      font-family: 'DM Sans', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── NOISE TEXTURE ── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+      opacity: 0.4;
+    }
+
+    .app { position: relative; z-index: 1; }
+
+    /* ── HEADER ── */
+    header {
+      padding: 20px 32px;
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      background: rgba(13,18,37,0.8);
+      backdrop-filter: blur(12px);
+      position: sticky; top: 0; z-index: 100;
+    }
+
+    .logo {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .logo-icon {
+      width: 36px; height: 36px;
+      background: linear-gradient(135deg, var(--blue), var(--purple));
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+    }
+    .logo-text { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1.2rem; }
+    .logo-sub { font-size: 0.7rem; color: var(--txt2); letter-spacing: 0.12em; text-transform: uppercase; }
+
+    .header-right { display: flex; align-items: center; gap: 16px; }
+
+    #last-updated {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem; color: var(--txt2);
+      background: var(--bg2); border: 1px solid var(--border);
+      padding: 6px 12px; border-radius: 20px;
+    }
+
+    .live-dot {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 0.72rem; color: var(--green);
+    }
+    .live-dot::before {
+      content: '';
+      width: 7px; height: 7px;
+      background: var(--green);
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity:1; box-shadow: 0 0 0 0 rgba(52,211,153,0.4); }
+      50% { opacity:0.6; box-shadow: 0 0 0 4px rgba(52,211,153,0); }
+    }
+
+    /* ── LOADING ── */
+    #loader {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 60vh; gap: 20px;
+    }
+    .spinner {
+      width: 48px; height: 48px;
+      border: 3px solid var(--border);
+      border-top-color: var(--blue);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loader p { color: var(--txt2); font-size: 0.9rem; }
+
+    /* ── ERROR ── */
+    #error-box {
+      display: none; margin: 40px 32px;
+      background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.3);
+      border-radius: var(--radius); padding: 24px;
+    }
+    #error-box h3 { color: var(--red); margin-bottom: 8px; }
+    #error-box p { color: var(--txt2); font-size: 0.9rem; }
+    #error-box code { background: var(--bg2); padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; }
+
+    /* ── MAIN ── */
+    main { padding: 28px 32px; display: flex; flex-direction: column; gap: 28px; }
+
+    /* ── DATA DATE BANNER ── */
+    .data-banner {
+      background: linear-gradient(135deg, rgba(56,189,248,0.08), rgba(167,139,250,0.06));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 20px;
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    }
+    .data-banner .left { display: flex; align-items: center; gap: 10px; }
+    .data-banner .tag {
+      background: rgba(56,189,248,0.15); color: var(--blue);
+      font-size: 0.7rem; font-weight: 600; letter-spacing: 0.1em;
+      padding: 3px 10px; border-radius: 20px; text-transform: uppercase;
+    }
+    .data-banner .date-val { font-family: 'JetBrains Mono', monospace; font-size: 0.95rem; font-weight: 700; }
+    .data-banner .right { display: flex; gap: 20px; }
+    .data-stat { text-align: right; }
+    .data-stat .val { font-family: 'JetBrains Mono', monospace; font-size: 1rem; font-weight: 700; color: var(--blue); }
+    .data-stat .lbl { font-size: 0.7rem; color: var(--txt2); }
+
+    /* ── KPI GRID ── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 16px;
+    }
+
+    .kpi-card {
+      background: var(--bg1);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      position: relative; overflow: hidden;
+      transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+    }
+    .kpi-card:hover {
+      border-color: var(--border);
+      transform: translateY(-2px);
+      box-shadow: var(--glow);
+    }
+    .kpi-card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: var(--card-accent, var(--blue));
+    }
+    .kpi-icon { font-size: 1.4rem; margin-bottom: 10px; }
+    .kpi-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.4rem; font-weight: 700;
+      color: var(--card-accent, var(--blue));
+      line-height: 1;
+    }
+    .kpi-lbl { font-size: 0.72rem; color: var(--txt2); margin-top: 4px; }
+    .kpi-sub { font-size: 0.7rem; color: var(--txt3); margin-top: 2px; }
+
+    /* ── SECTION LABEL ── */
+    .section-label {
+      font-family: 'Syne', sans-serif;
+      font-size: 0.7rem; font-weight: 700;
+      letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--txt2); margin-bottom: 14px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .section-label::after { content: ''; flex: 1; height: 1px; background: var(--border2); }
+
+    /* ── CHARTS GRID ── */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    .chart-wide { grid-column: 1 / -1; }
+
+    .chart-card {
+      background: var(--bg1);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+    .chart-card h3 {
+      font-family: 'Syne', sans-serif;
+      font-size: 0.85rem; font-weight: 700;
+      color: var(--txt); margin-bottom: 4px;
+    }
+    .chart-card p { font-size: 0.72rem; color: var(--txt2); margin-bottom: 16px; }
+    .chart-wrap { position: relative; }
+
+    /* ── HEATMAP ── */
+    .heatmap-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+      gap: 8px;
+    }
+    .hm-cell {
+      border-radius: var(--radius-sm);
+      padding: 10px 8px;
+      text-align: center; cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .hm-cell:hover { transform: scale(1.06); box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
+    .hm-sym { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; font-weight: 700; word-break: break-all; }
+    .hm-val { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; font-weight: 700; margin-top: 3px; }
+
+    /* ── TABLE ── */
+    .table-controls {
+      display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+    }
+    .search-input {
+      flex: 1; min-width: 200px;
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 8px 14px;
+      color: var(--txt); font-size: 0.85rem; outline: none;
+      font-family: 'DM Sans', sans-serif;
+      transition: border-color 0.2s;
+    }
+    .search-input:focus { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(56,189,248,0.1); }
+    .search-input::placeholder { color: var(--txt3); }
+
+    .filter-select {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 8px 12px;
+      color: var(--txt); font-size: 0.82rem; outline: none; cursor: pointer;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    thead { background: var(--bg2); position: sticky; top: 0; z-index: 2; }
+    th {
+      padding: 11px 14px; text-align: left;
+      font-family: 'Syne', sans-serif; font-size: 0.68rem;
+      font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--txt2);
+      white-space: nowrap; cursor: pointer;
+      user-select: none; border-bottom: 1px solid var(--border);
+      transition: color 0.15s;
+    }
+    th:hover { color: var(--blue); }
+    th.sorted { color: var(--blue); }
+    th .sort-icon { margin-left: 4px; opacity: 0.5; font-size: 0.65rem; }
+    th.sorted .sort-icon { opacity: 1; }
+
+    tr { border-bottom: 1px solid var(--border2); transition: background 0.1s; }
+    tr:last-child { border-bottom: none; }
+    tr:hover { background: var(--bg2); cursor: pointer; }
+
+    td { padding: 10px 14px; white-space: nowrap; }
+    td.sym { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 0.8rem; color: var(--blue); }
+    td.num { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; }
+    td.pos { color: var(--green); }
+    td.neg { color: var(--red); }
+    td.neu { color: var(--txt2); }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px; border-radius: 20px;
+      font-size: 0.68rem; font-weight: 600; white-space: nowrap;
+    }
+    .badge-green { background: rgba(52,211,153,0.15); color: var(--green); }
+    .badge-blue  { background: rgba(56,189,248,0.15); color: var(--blue); }
+    .badge-yellow{ background: rgba(251,191,36,0.15); color: var(--yellow); }
+    .badge-red   { background: rgba(248,113,113,0.15); color: var(--red); }
+    .badge-purple{ background: rgba(167,139,250,0.15); color: var(--purple); }
+    .badge-orange{ background: rgba(251,146,60,0.15); color: var(--orange); }
+
+    /* ── MODAL ── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; z-index: 999;
+      background: rgba(8,12,24,0.85); backdrop-filter: blur(6px);
+      align-items: center; justify-content: center; padding: 20px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--bg1); border: 1px solid var(--border);
+      border-radius: 16px; width: 100%; max-width: 700px;
+      max-height: 90vh; overflow-y: auto;
+      box-shadow: 0 0 60px rgba(56,189,248,0.1);
+      animation: modalIn 0.2s ease;
+    }
+    @keyframes modalIn { from { opacity:0; transform: scale(0.96) translateY(10px); } to { opacity:1; transform:none; } }
+
+    .modal-header {
+      padding: 20px 24px; border-bottom: 1px solid var(--border2);
+      display: flex; align-items: flex-start; justify-content: space-between;
+    }
+    .modal-sym { font-family: 'Syne', sans-serif; font-size: 1.4rem; font-weight: 800; color: var(--blue); }
+    .modal-close {
+      background: var(--bg2); border: 1px solid var(--border);
+      color: var(--txt2); cursor: pointer; font-size: 1rem;
+      width: 32px; height: 32px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s, color 0.15s;
+    }
+    .modal-close:hover { background: var(--bg3); color: var(--txt); }
+
+    .modal-body { padding: 20px 24px; }
+    .modal-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .modal-stat {
+      background: var(--bg2); border: 1px solid var(--border2);
+      border-radius: var(--radius-sm); padding: 12px 14px;
+    }
+    .modal-stat .v { font-family: 'JetBrains Mono', monospace; font-size: 1rem; font-weight: 700; }
+    .modal-stat .l { font-size: 0.68rem; color: var(--txt2); margin-top: 2px; }
+
+    .modal-section { margin-top: 20px; }
+    .modal-section h4 {
+      font-family: 'Syne', sans-serif; font-size: 0.72rem; font-weight: 700;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--txt2);
+      margin-bottom: 10px;
+    }
+
+    /* ── PROGRESS BAR ── */
+    .range-bar { height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+    .range-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--blue), var(--green)); }
+
+    /* ── CONFIG BANNER ── */
+    .config-banner {
+      background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.25);
+      border-radius: var(--radius); padding: 14px 20px;
+      display: flex; align-items: center; gap: 12px; font-size: 0.85rem;
+    }
+    .config-banner code {
+      background: var(--bg2); padding: 2px 8px; border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; color: var(--yellow);
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      margin-top: 20px; padding: 20px 32px;
+      border-top: 1px solid var(--border2);
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 0.72rem; color: var(--txt3);
+    }
+    footer span { font-family: 'JetBrains Mono', monospace; }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 768px) {
+      header { padding: 14px 16px; }
+      main { padding: 16px; gap: 20px; }
+      .charts-grid { grid-template-columns: 1fr; }
+      .chart-wide { grid-column: auto; }
+      .modal-grid { grid-template-columns: repeat(2,1fr); }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">📊</div>
+      <div>
+        <div class="logo-text">ETF PlayBook</div>
+        <div class="logo-sub">Live Market Dashboard</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div id="last-updated">Loading…</div>
+      <div class="live-dot">Live</div>
+    </div>
+  </header>
+
+  <!-- LOADER -->
+  <div id="loader">
+    <div class="spinner"></div>
+    <p>Fetching latest ETF data…</p>
+  </div>
+
+  <!-- ERROR -->
+  <div id="error-box">
+    <h3>⚠ Could not load data</h3>
+    <p id="error-msg">Unable to fetch the CSV. Make sure your GitHub username and repo name are set correctly in the <code>CONFIG</code> block at the top of this file.</p>
+  </div>
+
+  <!-- MAIN DASHBOARD -->
+  <main id="dashboard" style="display:none;">
+
+    <!-- CONFIG WARNING (shown when still default) -->
+    <div id="config-warn" class="config-banner" style="display:none;">
+      ⚠ &nbsp;<strong>Configure your repo:</strong>&nbsp; Edit the <code>CONFIG</code> block inside this file and set your GitHub <code>githubUser</code> and <code>githubRepo</code>.
+    </div>
+
+    <!-- DATA DATE BANNER -->
+    <div class="data-banner">
+      <div class="left">
+        <span class="tag">Data Date</span>
+        <span class="date-val" id="data-date">—</span>
+      </div>
+      <div class="right">
+        <div class="data-stat">
+          <div class="val" id="stat-etfs">—</div>
+          <div class="lbl">ETFs Tracked</div>
+        </div>
+        <div class="data-stat">
+          <div class="val" id="stat-mktcap">—</div>
+          <div class="lbl">Total Mkt Cap (Cr)</div>
+        </div>
+        <div class="data-stat">
+          <div class="val" id="stat-vol">—</div>
+          <div class="lbl">Total Volume</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- KPI CARDS -->
+    <div>
+      <div class="section-label">Key Metrics</div>
+      <div class="kpi-grid" id="kpi-grid"></div>
+    </div>
+
+    <!-- PERFORMANCE HEATMAP -->
+    <div>
+      <div class="section-label">Today's Performance Heatmap</div>
+      <div class="chart-card">
+        <h3>Return Heatmap — All ETFs</h3>
+        <p>Size = Market Cap intensity · Color = Day return direction</p>
+        <div class="heatmap-grid" id="heatmap"></div>
+      </div>
+    </div>
+
+    <!-- CHARTS ROW 1 -->
+    <div class="charts-grid">
+      <div class="chart-card chart-wide">
+        <h3>Top & Bottom Performers Today</h3>
+        <p>Percentage change from previous close — sorted by return</p>
+        <div class="chart-wrap" style="height:280px;">
+          <canvas id="chart-perf"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <h3>52-Week Range Position</h3>
+        <p>How far each ETF sits within its annual range</p>
+        <div class="chart-wrap" style="height:260px;">
+          <canvas id="chart-range"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <h3>Trend Label Distribution</h3>
+        <p>Range-position classification of the universe</p>
+        <div class="chart-wrap" style="height:260px;">
+          <canvas id="chart-trend"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- CHARTS ROW 2 -->
+    <div class="charts-grid">
+      <div class="chart-card">
+        <h3>Volatility Spectrum</h3>
+        <p>Annual volatility — lower is more stable</p>
+        <div class="chart-wrap" style="height:260px;">
+          <canvas id="chart-vol"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <h3>Delivery vs Volume Quality</h3>
+        <p>Delivery-to-traded % — higher = conviction buying</p>
+        <div class="chart-wrap" style="height:260px;">
+          <canvas id="chart-delivery"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <h3>Top 8 by Market Cap</h3>
+        <p>Total market capitalisation in Crore ₹</p>
+        <div class="chart-wrap" style="height:260px;">
+          <canvas id="chart-mktcap"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <h3>Applicable Margin Requirement</h3>
+        <p>Total margin % required — key for futures/options</p>
+        <div class="chart-wrap" style="height:260px;">
+          <canvas id="chart-margin"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- TABLE -->
+    <div>
+      <div class="section-label">Full ETF Universe</div>
+      <div class="table-controls">
+        <input class="search-input" type="text" id="search" placeholder="🔍  Search symbol…" />
+        <select class="filter-select" id="filter-trend">
+          <option value="">All Trend Labels</option>
+          <option value="Near High">Near High</option>
+          <option value="Mid Range">Mid Range</option>
+          <option value="Uncertain">Uncertain</option>
+          <option value="Near Low">Near Low</option>
+        </select>
+        <select class="filter-select" id="filter-impl">
+          <option value="">All Implications</option>
+          <option value="Strong Uptrend">Strong Uptrend</option>
+          <option value="Range-bound/Unclear">Range-bound/Unclear</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr id="table-head"></tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <footer>
+    <span>ETF PlayBook Dashboard · Built for GitHub Pages · Data auto-refreshes on page load</span>
+    <span id="footer-time"></span>
+  </footer>
+
+</div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-sym" id="modal-sym"></div>
+        <div style="font-size:0.78rem; color:var(--txt2); margin-top:3px;" id="modal-date"></div>
+      </div>
+      <button class="modal-close" id="modal-close">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════
+   ▶  CONFIG — UPDATE THESE FOR YOUR REPO
+   ══════════════════════════════════════════════ */
+const CONFIG = {
+  githubUser: 'YOUR_GITHUB_USERNAME',   // ← replace
+  githubRepo: 'YOUR_REPO_NAME',         // ← replace
+  csvFile:    'ETF_PlayBook.csv',
+  branch:     'main'
+};
+/* ════════════════════════════════════════════ */
+
+// Build CSV URL — falls back to local file for local testing
+const isLocal = ['localhost','127.0.0.1',''].includes(location.hostname);
+const CSV_URL = isLocal
+  ? CONFIG.csvFile
+  : `https://raw.githubusercontent.com/${CONFIG.githubUser}/${CONFIG.githubRepo}/${CONFIG.branch}/${CONFIG.csvFile}?_t=${Date.now()}`;
+
+const isDefaultConfig = CONFIG.githubUser === 'YOUR_GITHUB_USERNAME';
+
+// ── Chart.js global defaults ──────────────────
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.font.family = "'JetBrains Mono', monospace";
+Chart.defaults.font.size = 11;
+Chart.defaults.plugins.legend.labels.boxWidth = 10;
+Chart.defaults.plugins.legend.labels.padding = 14;
+Chart.defaults.plugins.tooltip.backgroundColor = '#111829';
+Chart.defaults.plugins.tooltip.borderColor = 'rgba(56,189,248,0.25)';
+Chart.defaults.plugins.tooltip.borderWidth = 1;
+Chart.defaults.plugins.tooltip.padding = 10;
+Chart.defaults.plugins.tooltip.titleColor = '#38bdf8';
+Chart.defaults.plugins.tooltip.bodyColor = '#e2e8f0';
+
+// ── State ─────────────────────────────────────
+let data = [];
+let sortCol = 'TodayPercentageChange';
+let sortDir = -1;
+let charts = {};
+
+// ── Helpers ───────────────────────────────────
+const fmt = (n, d=2) => n == null || isNaN(n) ? '—' : Number(n).toLocaleString('en-IN', {maximumFractionDigits:d, minimumFractionDigits:d});
+const fmtCr = n => n >= 100000 ? (n/100000).toFixed(1)+'L' : n >= 1000 ? (n/1000).toFixed(1)+'K' : fmt(n,0);
+const fmtVol = n => n >= 1e7 ? (n/1e7).toFixed(2)+'Cr' : n >= 1e5 ? (n/1e5).toFixed(1)+'L' : n >= 1000 ? (n/1000).toFixed(0)+'K' : n;
+const sign  = v => v > 0 ? '+' : '';
+const clr   = v => v > 0 ? '#34d399' : v < 0 ? '#f87171' : '#94a3b8';
+
+function trendBadge(label) {
+  const map = {
+    'Near High':  'badge-green',
+    'Mid Range':  'badge-blue',
+    'Uncertain':  'badge-yellow',
+    'Near Low':   'badge-red',
+    'Strong Uptrend':    'badge-purple',
+    'Range-bound/Unclear': 'badge-orange'
+  };
+  return `<span class="badge ${map[label]||'badge-blue'}">${label}</span>`;
+}
+
+// ── Destroy existing chart ────────────────────
+function destroyChart(id) { if (charts[id]) { charts[id].destroy(); delete charts[id]; } }
+
+// ── LOAD DATA ─────────────────────────────────
+async function loadData() {
+  try {
+    const res = await fetch(CSV_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const txt = await res.text();
+    const parsed = Papa.parse(txt, { header: true, skipEmptyLines: true, dynamicTyping: true });
+    if (!parsed.data.length) throw new Error('CSV is empty');
+    data = parsed.data;
+    render();
+  } catch(e) {
+    document.getElementById('loader').style.display = 'none';
+    const eb = document.getElementById('error-box');
+    eb.style.display = 'block';
+    document.getElementById('error-msg').textContent = `Error: ${e.message}. ${isDefaultConfig ? 'Configure your GitHub username and repo in the CONFIG block.' : 'Check your repo settings and ensure the CSV file exists.'}`;
+  }
+}
+
+// ── MAIN RENDER ───────────────────────────────
+function render() {
+  document.getElementById('loader').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'flex';
+  if (isDefaultConfig) document.getElementById('config-warn').style.display = 'flex';
+
+  // Banner
+  document.getElementById('data-date').textContent = data[0]?.updateon || '—';
+  document.getElementById('stat-etfs').textContent = data.length;
+  const totalMktCap = data.reduce((s,r) => s + (r.totalMarketCap_cr||0), 0);
+  document.getElementById('stat-mktcap').textContent = fmtCr(totalMktCap);
+  const totalVol = data.reduce((s,r) => s + (r.volume||0), 0);
+  document.getElementById('stat-vol').textContent = fmtVol(totalVol);
+
+  document.getElementById('last-updated').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+  document.getElementById('footer-time').textContent = new Date().toLocaleString();
+
+  renderKPI();
+  renderHeatmap();
+  renderCharts();
+  renderTable();
+}
+
+// ── KPI CARDS ─────────────────────────────────
+function renderKPI() {
+  const gainers = [...data].sort((a,b) => b.TodayPercentageChange - a.TodayPercentageChange);
+  const topG  = gainers[0];
+  const topL  = gainers[gainers.length-1];
+  const byVol = [...data].sort((a,b) => b.volume - a.volume)[0];
+  const byMkt = [...data].sort((a,b) => b.totalMarketCap_cr - a.totalMarketCap_cr)[0];
+  const avgVol = data.reduce((s,r) => s + (r.cmAnnualVolatility||0), 0) / data.length;
+  const nearHigh = data.filter(r => r.RangeTrendLabel === 'Near High').length;
+  const avgDel = data.reduce((s,r) => s + (r.deliveryToTradedQuantity_Percentage||0), 0) / data.length;
+  const uptrend = data.filter(r => r.TrendImplication === 'Strong Uptrend').length;
+
+  const cards = [
+    { icon:'🚀', val: `${topG?.symbol}`, sub: `${sign(topG?.TodayPercentageChange)}${fmt(topG?.TodayPercentageChange)}%`, lbl:'Top Gainer', accent:'#34d399' },
+    { icon:'📉', val: `${topL?.symbol}`, sub: `${sign(topL?.TodayPercentageChange)}${fmt(topL?.TodayPercentageChange)}%`, lbl:'Biggest Laggard', accent:'#f87171' },
+    { icon:'🏦', val: `${byMkt?.symbol}`, sub: `₹${fmtCr(byMkt?.totalMarketCap_cr)} Cr`, lbl:'Largest by Mkt Cap', accent:'#38bdf8' },
+    { icon:'🔥', val: `${byVol?.symbol}`, sub: fmtVol(byVol?.volume)+' shares', lbl:'Highest Volume', accent:'#fb923c' },
+    { icon:'📈', val: `${nearHigh}/${data.length}`, sub: `ETFs near 52W high`, lbl:'Near High Zone', accent:'#a78bfa' },
+    { icon:'⚡', val: `${uptrend}`, sub: `of ${data.length} ETFs`, lbl:'Strong Uptrend Signal', accent:'#34d399' },
+    { icon:'📦', val: `${fmt(avgDel,1)}%`, sub: `avg delivery ratio`, lbl:'Avg Delivery %', accent:'#38bdf8' },
+    { icon:'〰', val: `${fmt(avgVol,1)}%`, sub: `avg annual vol`, lbl:'Avg Ann. Volatility', accent:'#fbbf24' },
+  ];
+
+  document.getElementById('kpi-grid').innerHTML = cards.map(c => `
+    <div class="kpi-card" style="--card-accent:${c.accent}">
+      <div class="kpi-icon">${c.icon}</div>
+      <div class="kpi-val">${c.val}</div>
+      <div class="kpi-lbl">${c.lbl}</div>
+      <div class="kpi-sub" style="color:${c.accent}">${c.sub}</div>
+    </div>
+  `).join('');
+}
+
+// ── HEATMAP ───────────────────────────────────
+function renderHeatmap() {
+  const sorted = [...data].sort((a,b) => b.TodayPercentageChange - a.TodayPercentageChange);
+  const maxAbs = Math.max(...sorted.map(r => Math.abs(r.TodayPercentageChange)));
+
+  document.getElementById('heatmap').innerHTML = sorted.map(r => {
+    const pct = r.TodayPercentageChange || 0;
+    const intensity = Math.min(Math.abs(pct) / maxAbs, 1);
+    const bg = pct > 0
+      ? `rgba(52,211,153,${0.1 + intensity * 0.55})`
+      : pct < 0
+        ? `rgba(248,113,113,${0.1 + intensity * 0.55})`
+        : 'rgba(148,163,184,0.1)';
+    const border = pct > 0 ? `rgba(52,211,153,${0.3+intensity*0.5})` : pct < 0 ? `rgba(248,113,113,${0.3+intensity*0.5})` : 'rgba(148,163,184,0.2)';
+    const txtClr = pct > 0 ? '#34d399' : pct < 0 ? '#f87171' : '#94a3b8';
+    return `<div class="hm-cell" style="background:${bg};border:1px solid ${border};" onclick="openModal('${r.symbol}')">
+      <div class="hm-sym" style="color:var(--txt)">${r.symbol}</div>
+      <div class="hm-val" style="color:${txtClr}">${sign(pct)}${fmt(pct)}%</div>
+    </div>`;
+  }).join('');
+}
+
+// ── CHARTS ────────────────────────────────────
+function renderCharts() {
+  // 1. Performance bar (all ETFs sorted)
+  destroyChart('perf');
+  const sortedPerf = [...data].sort((a,b) => b.TodayPercentageChange - a.TodayPercentageChange);
+  charts.perf = new Chart(document.getElementById('chart-perf'), {
+    type: 'bar',
+    data: {
+      labels: sortedPerf.map(r => r.symbol),
+      datasets: [{
+        label: 'Day Change %',
+        data: sortedPerf.map(r => r.TodayPercentageChange),
+        backgroundColor: sortedPerf.map(r => r.TodayPercentageChange >= 0 ? 'rgba(52,211,153,0.75)' : 'rgba(248,113,113,0.75)'),
+        borderRadius: 3,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { maxRotation: 60, font: { size: 9 } } },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { callback: v => v + '%' } }
+      }
+    }
+  });
+
+  // 2. 52-week range position (gauge-like horizontal bar)
+  destroyChart('range');
+  const top12 = [...data].sort((a,b) => b.RangePositionTrend - a.RangePositionTrend).slice(0,12);
+  charts.range = new Chart(document.getElementById('chart-range'), {
+    type: 'bar',
+    data: {
+      labels: top12.map(r => r.symbol),
+      datasets: [{
+        label: 'Range Position %',
+        data: top12.map(r => r.RangePositionTrend),
+        backgroundColor: top12.map(r => {
+          const v = r.RangePositionTrend;
+          if (v >= 75) return 'rgba(52,211,153,0.8)';
+          if (v >= 40) return 'rgba(56,189,248,0.8)';
+          return 'rgba(248,113,113,0.8)';
+        }),
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { min:0, max:100, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { callback: v => v+'%' } },
+        y: { grid: { display: false }, ticks: { font: { size: 10 } } }
+      }
+    }
+  });
+
+  // 3. Trend label doughnut
+  destroyChart('trend');
+  const trendCounts = {};
+  data.forEach(r => { const k = r.RangeTrendLabel||'Unknown'; trendCounts[k] = (trendCounts[k]||0)+1; });
+  charts.trend = new Chart(document.getElementById('chart-trend'), {
+    type: 'doughnut',
+    data: {
+      labels: Object.keys(trendCounts),
+      datasets: [{
+        data: Object.values(trendCounts),
+        backgroundColor: ['rgba(52,211,153,0.8)','rgba(56,189,248,0.8)','rgba(251,191,36,0.8)','rgba(248,113,113,0.8)'],
+        borderColor: '#0d1225', borderWidth: 3,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '65%',
+      plugins: { legend: { position: 'right' } }
+    }
+  });
+
+  // 4. Volatility bar
+  destroyChart('vol');
+  const volSorted = [...data].sort((a,b) => b.cmAnnualVolatility - a.cmAnnualVolatility).slice(0,14);
+  charts.vol = new Chart(document.getElementById('chart-vol'), {
+    type: 'bar',
+    data: {
+      labels: volSorted.map(r => r.symbol),
+      datasets: [{
+        label: 'Annual Volatility %',
+        data: volSorted.map(r => r.cmAnnualVolatility),
+        backgroundColor: volSorted.map(r => {
+          const v = r.cmAnnualVolatility;
+          if (v > 30) return 'rgba(248,113,113,0.8)';
+          if (v > 20) return 'rgba(251,191,36,0.8)';
+          return 'rgba(56,189,248,0.8)';
+        }),
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { callback: v => v+'%' } },
+        y: { grid: { display: false }, ticks: { font: { size: 10 } } }
+      }
+    }
+  });
+
+  // 5. Delivery % bar
+  destroyChart('delivery');
+  const delSorted = [...data].sort((a,b) => b.deliveryToTradedQuantity_Percentage - a.deliveryToTradedQuantity_Percentage).slice(0,14);
+  charts.delivery = new Chart(document.getElementById('chart-delivery'), {
+    type: 'bar',
+    data: {
+      labels: delSorted.map(r => r.symbol),
+      datasets: [{
+        label: 'Delivery %',
+        data: delSorted.map(r => r.deliveryToTradedQuantity_Percentage),
+        backgroundColor: delSorted.map(r => {
+          const v = r.deliveryToTradedQuantity_Percentage;
+          if (v >= 70) return 'rgba(52,211,153,0.8)';
+          if (v >= 50) return 'rgba(56,189,248,0.8)';
+          return 'rgba(251,191,36,0.8)';
+        }),
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { min:0, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { callback: v => v+'%' } },
+        y: { grid: { display: false }, ticks: { font: { size: 10 } } }
+      }
+    }
+  });
+
+  // 6. Market cap top 8
+  destroyChart('mktcap');
+  const mkTop = [...data].sort((a,b) => b.totalMarketCap_cr - a.totalMarketCap_cr).slice(0,8);
+  charts.mktcap = new Chart(document.getElementById('chart-mktcap'), {
+    type: 'bar',
+    data: {
+      labels: mkTop.map(r => r.symbol),
+      datasets: [{
+        label: 'Market Cap (Cr)',
+        data: mkTop.map(r => r.totalMarketCap_cr),
+        backgroundColor: 'rgba(167,139,250,0.75)',
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display:false }, ticks: { font: { size:10 } } },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { callback: v => '₹'+fmtCr(v) } }
+      }
+    }
+  });
+
+  // 7. Applicable margin
+  destroyChart('margin');
+  const margSorted = [...data].sort((a,b) => b.applicableMargin - a.applicableMargin).slice(0,14);
+  charts.margin = new Chart(document.getElementById('chart-margin'), {
+    type: 'bar',
+    data: {
+      labels: margSorted.map(r => r.symbol),
+      datasets: [{
+        label: 'Applicable Margin %',
+        data: margSorted.map(r => r.applicableMargin),
+        backgroundColor: 'rgba(251,146,60,0.75)',
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { callback: v => v+'%' } },
+        y: { grid: { display: false }, ticks: { font: { size:10 } } }
+      }
+    }
+  });
+}
+
+// ── TABLE ─────────────────────────────────────
+const TABLE_COLS = [
+  { key: 'symbol',           label: 'Symbol',           type: 'sym' },
+  { key: 'lastPrice',        label: 'LTP ₹',            type: 'num' },
+  { key: 'TodayChangeValue', label: 'Chg ₹',            type: 'sign' },
+  { key: 'TodayPercentageChange', label: 'Chg %',       type: 'sign' },
+  { key: 'vwap',             label: 'VWAP',             type: 'num' },
+  { key: 'totalMarketCap_cr',label: 'Mkt Cap Cr',       type: 'num0' },
+  { key: 'volume',           label: 'Volume',           type: 'vol' },
+  { key: 'deliveryToTradedQuantity_Percentage', label:'Del %', type:'num' },
+  { key: 'cmAnnualVolatility',label: 'Ann Vol %',       type: 'num' },
+  { key: 'FarFrom52WeekHigh',label: '↓52W High %',      type: 'num' },
+  { key: 'FarFrom52WeekLow', label: '↑52W Low %',       type: 'num' },
+  { key: 'applicableMargin', label: 'Margin %',         type: 'num' },
+  { key: 'RangeTrendLabel',  label: 'Range Label',      type: 'badge' },
+  { key: 'TrendImplication', label: 'Implication',      type: 'badge' },
+];
+
+function renderTable() {
+  // Header
+  document.getElementById('table-head').innerHTML = TABLE_COLS.map(c => `
+    <th onclick="sortTable('${c.key}')" class="${c.key===sortCol?'sorted':''}">
+      ${c.label}<span class="sort-icon">${c.key===sortCol?(sortDir>0?'▲':'▼'):'⇅'}</span>
+    </th>
+  `).join('');
+
+  // Filter
+  const q  = (document.getElementById('search').value||'').toLowerCase();
+  const ft = document.getElementById('filter-trend').value;
+  const fi = document.getElementById('filter-impl').value;
+
+  let rows = [...data]
+    .filter(r => !q || r.symbol.toLowerCase().includes(q))
+    .filter(r => !ft || r.RangeTrendLabel === ft)
+    .filter(r => !fi || r.TrendImplication === fi)
+    .sort((a,b) => sortDir * (a[sortCol] > b[sortCol] ? 1 : a[sortCol] < b[sortCol] ? -1 : 0));
+
+  document.getElementById('table-body').innerHTML = rows.map(r => `
+    <tr onclick="openModal('${r.symbol}')">
+      ${TABLE_COLS.map(c => {
+        const v = r[c.key];
+        if (c.type === 'sym')   return `<td class="sym">${v}</td>`;
+        if (c.type === 'badge') return `<td>${trendBadge(v)}</td>`;
+        if (c.type === 'sign')  return `<td class="num ${v>0?'pos':v<0?'neg':'neu'}">${sign(v)}${fmt(v)}</td>`;
+        if (c.type === 'num0')  return `<td class="num">${fmt(v,0)}</td>`;
+        if (c.type === 'vol')   return `<td class="num">${fmtVol(v)}</td>`;
+        return `<td class="num">${fmt(v)}</td>`;
+      }).join('')}
+    </tr>
+  `).join('') || `<tr><td colspan="${TABLE_COLS.length}" style="text-align:center;padding:30px;color:var(--txt2);">No ETFs match your filter</td></tr>`;
+}
+
+window.sortTable = (col) => {
+  if (sortCol === col) sortDir *= -1;
+  else { sortCol = col; sortDir = -1; }
+  renderTable();
+};
+
+document.getElementById('search').addEventListener('input', renderTable);
+document.getElementById('filter-trend').addEventListener('change', renderTable);
+document.getElementById('filter-impl').addEventListener('change', renderTable);
+
+// ── MODAL ─────────────────────────────────────
+window.openModal = (sym) => {
+  const r = data.find(d => d.symbol === sym);
+  if (!r) return;
+
+  document.getElementById('modal-sym').textContent = sym;
+  document.getElementById('modal-date').textContent = `Data as of ${r.updateon} · Listed: ${r.listingDate}`;
+
+  const chgClr = r.TodayPercentageChange > 0 ? 'var(--green)' : 'var(--red)';
+  const rangePos = ((r.lastPrice - r['52WeekMin']) / ((r['52WeekMax'] - r['52WeekMin'])||1) * 100).toFixed(1);
+
+  document.getElementById('modal-body').innerHTML = `
+    <div class="modal-grid">
+      ${stat('LTP ₹', '₹'+fmt(r.lastPrice), chgClr)}
+      ${stat('Day Change', sign(r.TodayPercentageChange)+fmt(r.TodayPercentageChange)+'%', chgClr)}
+      ${stat('VWAP', '₹'+fmt(r.vwap))}
+      ${stat('Open', '₹'+fmt(r.open))}
+      ${stat("Day's Low", '₹'+fmt(r.minintraday))}
+      ${stat("Day's High", '₹'+fmt(r.maxintraday))}
+      ${stat('Prev Close', '₹'+fmt(r.previousClose))}
+      ${stat('iNAV', '₹'+fmt(r.iNavValue))}
+      ${stat('iNAV Match', r.checkINAV?'✅ Yes':'⚠ No', r.checkINAV?'var(--green)':'var(--yellow)')}
+    </div>
+
+    <div class="modal-section">
+      <h4>52-Week Range</h4>
+      <div style="display:flex;justify-content:space-between;font-size:0.78rem;color:var(--txt2);margin-bottom:4px;">
+        <span>₹${fmt(r['52WeekMin'])} (${r['52WeekMinDate']})</span>
+        <span>₹${fmt(r['52WeekMax'])} (${r['52WeekMaxDate']})</span>
+      </div>
+      <div class="range-bar"><div class="range-fill" style="width:${rangePos}%"></div></div>
+      <div style="font-size:0.72rem;color:var(--txt2);margin-top:4px;">
+        Position: <strong style="color:var(--blue)">${rangePos}%</strong> within range · 
+        ↓ ${fmt(r.FarFrom52WeekHigh)}% from High · ↑ ${fmt(r.FarFrom52WeekLow)}% from Low
+      </div>
+    </div>
+
+    <div class="modal-section">
+      <h4>Volume & Delivery</h4>
+      <div class="modal-grid">
+        ${stat('Volume', fmtVol(r.volume))}
+        ${stat('Delivery Qty', fmtVol(r.deliveryQuantity))}
+        ${stat('Delivery %', fmt(r.deliveryToTradedQuantity_Percentage)+'%', r.deliveryToTradedQuantity_Percentage>60?'var(--green)':'var(--yellow)')}
+        ${stat('Traded Vol (Lks)', fmt(r.totalTradedVolume_lks))}
+        ${stat('Traded Val (Cr)', fmt(r.totalTradedValue_cr))}
+        ${stat('Mkt Cap (Cr)', fmt(r.totalMarketCap_cr,0))}
+      </div>
+    </div>
+
+    <div class="modal-section">
+      <h4>Risk & Margin</h4>
+      <div class="modal-grid">
+        ${stat('Daily Volatility', fmt(r.cmDailyVolatility)+'%')}
+        ${stat('Annual Volatility', fmt(r.cmAnnualVolatility)+'%', r.cmAnnualVolatility>30?'var(--red)':r.cmAnnualVolatility>20?'var(--yellow)':'var(--green)')}
+        ${stat('Security VaR', fmt(r.securityVar)+'%')}
+        ${stat('Var Margin', fmt(r.varMargin)+'%')}
+        ${stat('Extr Loss Margin', fmt(r.extremeLossMargin)+'%')}
+        ${stat('Applicable Margin', fmt(r.applicableMargin)+'%', 'var(--orange)')}
+      </div>
+    </div>
+
+    <div class="modal-section">
+      <h4>Trend Analysis</h4>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        ${trendBadge(r.RangeTrendLabel)} ${trendBadge(r.TrendImplication)}
+        <span style="font-size:0.78rem;color:var(--txt2)">Day Perf Score: <strong style="color:var(--blue)">${fmt(r.DayPerformance)}</strong></span>
+        <span style="font-size:0.78rem;color:var(--txt2)">Intraday Range: <strong style="color:var(--yellow)">${fmt(r.IntradayRangePercent)}%</strong></span>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('modal-overlay').classList.add('open');
+};
+
+function stat(label, val, color='var(--txt)') {
+  return `<div class="modal-stat">
+    <div class="v" style="color:${color}">${val}</div>
+    <div class="l">${label}</div>
+  </div>`;
+}
+
+document.getElementById('modal-close').addEventListener('click', () => {
+  document.getElementById('modal-overlay').classList.remove('open');
+});
+document.getElementById('modal-overlay').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('modal-overlay'))
+    document.getElementById('modal-overlay').classList.remove('open');
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.getElementById('modal-overlay').classList.remove('open');
+});
+
+// ── BOOT ──────────────────────────────────────
+loadData();
+</script>
+</body>
+</html>
